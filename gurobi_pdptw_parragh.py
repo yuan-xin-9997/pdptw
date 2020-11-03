@@ -2,12 +2,13 @@
 """
 @author: yuan_xin
 @contact: yuanxin9997@qq.com
-@file: gurobi_pdptw.py
+@file: gurobi_pdptw_parragh.py
 @time: 2020/10/20 11:13
-@description:使用Python调用Gurobi求解PDPTW问题；Gurobi是标杆，用来对比其他算法用的
-求解器：Gurobi
-模型：
-Benchmark：
+@description:使用Python调用Gurobi求解PDPTW问题；Gurobi是标杆，用来对比其他算法用的.
+==求解器：Gurobi 9.0.3
+==模型：Parragh, S. N., et al. (2008). "A survey on pickup and delivery problems: Part II: Transportation between pickup
+and delivery locations." Journal für Betriebswirtschaft 58(2): 81-117.
+==Benchmark：Li & Lim's PDPTW benchmark - SINTEF Applied Mathematics
 """
 
 from gurobipy import *
@@ -99,7 +100,10 @@ def construct_time_matrix(veh, dist_mat):
     time_matrix = {}
     for k in veh.keys():
         for i, j in dist_mat.keys():
-            time_matrix[i, j, k] = dist_mat[i, j] / veh[k][1]
+            if veh[k][1] == 0:
+                time_matrix[i, j, k] = dist_mat[i, j] / 1
+            else:
+                time_matrix[i, j, k] = dist_mat[i, j] / veh[k][1]
     return time_matrix
 
 
@@ -196,10 +200,16 @@ def build_pdptw_model(veh, loc, dem, time_w, serv_time, req, task_no_list, e_tim
     # 设置目标函数:最小化车辆行驶距离
     c3_distance_cost = 0
     for k in veh.keys():
-        for node1 in loc.keys():
-            for node2 in loc.keys():
-                if node1 != node1:
+        for node1 in task_no_list:
+            if node1 == task_no_list[0]:
+                for node2 in task_no_list[1:]:
                     c3_distance_cost += (dist_mat[node1, node2] * x[node1, node2, k])
+            elif node1 == task_no_list[-1]:
+                continue
+            else:
+                for node2 in task_no_list[1:]:
+                    if node1 != node2:
+                        c3_distance_cost += (dist_mat[node1, node2] * x[node1, node2, k])
     total_cost = c3_distance_cost
     model.setObjective(total_cost, GRB.MINIMIZE)
     model.update()
@@ -209,29 +219,36 @@ def build_pdptw_model(veh, loc, dem, time_w, serv_time, req, task_no_list, e_tim
     return model, x_index, total_cost
 
 
-def out_put_solution(sol_x, sol_b, sol_q, model_obj, veh, task_no_list):
+def out_put_solution(mod, sol_x, sol_b, sol_q, veh, task_no_list, file_name):
     print('==========================================================')
-    print('总成本：', model_obj)
+    # with open('%s.log' % file_name, 'w') as f:
+    # mod.setParam(GRB.Param.LogFile, '%s.log' % file_name)
+    print('总成本：', mod.ObjVal)
+    veh_count = 0
     for k in veh.keys():
+        if sol_x[task_no_list[0], task_no_list[-1], k].x > 0.5:
+            continue
+        veh_count += 1
         print('route for vehicle {}：'.format(k))
         for node1 in task_no_list:
             if node1 == task_no_list[0]:
                 for node2 in task_no_list[1:]:
-                    if x[node1, node2, k].x > 0.5:
+                    if sol_x[node1, node2, k].x > 0.5:
                         print('%s-->%s' % (node1, node2))
             elif node1 == task_no_list[-1]:
                 continue
             else:
                 for node2 in task_no_list[1:]:
-                    if node1 != node2 and x[node1, node2, k].x > 0.5:
+                    if node1 != node2 and sol_x[node1, node2, k].x > 0.5:
                         print('%s-->%s' % (node1, node2))
-                        x_index[node1, node2, k] = 0
+    print('共使用{}辆车'.format(veh_count))
 
 
 if __name__ == '__main__':
     start = time.time()
     # 数据文件路径
-    data_path = './LiLimPDPTWbenchmark/pdptw100_revised/lc103.txt'
+    data_path = './LiLimPDPTWbenchmark/pdptw100_revised/lr104.txt'
+    log_file_name = data_path[-9:-4]
     # 读取数据
     vehicles, locations, demand, time_window, service_time, request, earliest_time, latest_time, task_no_list = \
         read_pdptw_benchmark_data(data_path)
@@ -242,10 +259,10 @@ if __name__ == '__main__':
     model, x_index, total_cost = build_pdptw_model(vehicles, locations, demand, time_window, service_time, request,
                                                    task_no_list, earliest_time, latest_time, distance_matrix,
                                                    longest_distance, time_matrix)
+    model.setParam(GRB.Param.LogFile, './gurobi_log/pdptw100_%s.log' % log_file_name)
     model.optimize()
-    # 打印结果
+    # 输出结果
     x, b, q = model.__data
-    obj = model.ObjVal
-    out_put_solution(x, b, q, obj, vehicles, task_no_list)
+    out_put_solution(model, x, b, q, vehicles, task_no_list, log_file_name)
     end = time.time()
-    print('程序总的运行时间：',end - start,'秒')
+    print('程序总的运行时间：', end - start, '秒')
